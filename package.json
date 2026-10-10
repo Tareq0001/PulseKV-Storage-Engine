@@ -1,0 +1,20 @@
+{
+  "name": "pulsekv-storage-engine",
+  "version": "1.0.0",
+  "description": "High-Performance Key-Value Storage Engine with Log-Structured Merge (LSM) Tree, WAL, MemTable, Bloom Filter, and Leveled Compaction",
+  "main": "src/engine.js",
+  "scripts": {
+    "test": "node tests/pulsekv.test.js"
+  },
+  "keywords": [
+    "lsm-tree",
+    "storage-engine",
+    "database-internals",
+    "bloom-filter",
+    "sstable",
+    "wal",
+    "compaction"
+  ],
+  "author": "أ. طارق ابوعشي",
+  "license": "MIT"
+}

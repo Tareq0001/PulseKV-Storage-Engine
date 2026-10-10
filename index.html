@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseKV Storage Engine // LSM-Tree, WAL & Compaction | أ. طارق ابوعشي</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💾</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090D14;
+      --surface: #101622;
+      --surface-2: #182236;
+      --border: #22314E;
+      --accent: #38BDF8;
+      --accent-glow: rgba(56, 189, 248, 0.25);
+      --success: #34D399;
+      --warning: #FBBF24;
+      --danger: #F87171;
+      --text: #F8FAFC;
+      --muted: #94A3B8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Cairo', sans-serif;
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    .top-nav {
+      background: rgba(16, 22, 34, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .brand { display: flex; align-items: center; gap: 0.85rem; }
+    .brand-icon {
+      width: 44px; height: 44px; border-radius: 12px;
+      background: linear-gradient(135deg, #38BDF8 0%, #1D4ED8 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem; box-shadow: 0 0 20px var(--accent-glow);
+    }
+    .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+    .hero {
+      background: linear-gradient(180deg, rgba(56, 189, 248, 0.05) 0%, transparent 100%);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2.5rem;
+      margin-bottom: 2rem;
+    }
+    .grid-kpi {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .card-kpi {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      position: relative;
+    }
+    .card-kpi::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--accent), transparent);
+    }
+    .kpi-num { font-size: 2.2rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: var(--accent); }
+    .kpi-label { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 2rem;
+    }
+    @media (max-width: 1024px) { .main-grid { grid-template-columns: 1fr; } }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 1.75rem;
+      margin-bottom: 2rem;
+    }
+    .panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border);
+    }
+    .btn {
+      background: var(--accent);
+      color: #090D14;
+      font-weight: 800;
+      border: none;
+      padding: 0.75rem 1.25rem;
+      border-radius: 10px;
+      cursor: pointer;
+      font-family: inherit;
+      width: 100%;
+      margin-bottom: 0.75rem;
+      transition: all 0.2s ease;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px var(--accent-glow); }
+    .btn-secondary { background: var(--surface-2); color: #FFF; border: 1px solid var(--border); }
+    .btn-danger { background: var(--danger); color: #FFF; }
+    
+    .input-group { margin-bottom: 1rem; }
+    .input-group label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    .input-control {
+      width: 100%; background: #070B12; border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.65rem 0.85rem; color: #FFF; font-family: 'JetBrains Mono', monospace;
+    }
+
+    .bloom-bit-grid {
+      display: grid;
+      grid-template-columns: repeat(32, 1fr);
+      gap: 4px;
+      background: #070B12;
+      padding: 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+    .bit-cell {
+      height: 12px;
+      border-radius: 2px;
+      background: #182236;
+      transition: all 0.3s ease;
+    }
+    .bit-cell.active { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+    .sstable-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+    }
+    .sst-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+    }
+    .sst-header { font-weight: 800; color: var(--accent); margin-bottom: 0.5rem; display: flex; justify-content: space-between; }
+
+    .author-seal-box {
+      margin-top: 3rem; padding: 2rem; text-align: center; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 16px; display: flex; align-items: center; justify-content: center; gap: 1.25rem;
+    }
+    .author-seal-glyph {
+      width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #FFD700 0%, #B8860B 100%);
+      display: flex; align-items: center; justify-content: center; font-size: 1.6rem; box-shadow: 0 0 25px rgba(255, 215, 0, 0.4);
+    }
+  </style>
+</head>
+<body>
+
+  <header class="top-nav">
+    <div class="brand">
+      <div class="brand-icon">💾</div>
+      <div>
+        <div style="font-size: 1.25rem; font-weight: 800; color: #FFF;">PulseKV // Log-Structured Merge Storage Engine</div>
+        <div style="font-size: 0.8rem; color: var(--muted);">WAL, MemTable, Bloom Filter & Leveled Compaction Architecture</div>
+      </div>
+    </div>
+    <span style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--success);">
+      <span style="width: 10px; height: 10px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px var(--success);"></span>
+      STORAGE ENGINE: HEALTHY
+    </span>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <h1 style="font-size: 2.2rem; font-weight: 900; margin-bottom: 0.75rem;">
+        محرك تخزين مفتاح-قيمة عالي الكفاءة (LSM-Tree Key-Value Engine)
+      </h1>
+      <p style="color: var(--muted); max-width: 900px; font-size: 1.05rem;">
+        محرك قواعد بيانات صُمم وفق المعايير العالمية لقواعد البيانات الموزعة (مثل RocksDB وCassandra). يدمج سجل العمليات المسبق (WAL) للتعافي من الانهيار، والذاكرة المرتبة السريعة (MemTable)، وفلاتر بلوم الاحتمالية لتسريع القراءة، وخوارزمية الدمج التدريجي (Leveled Compaction).
+      </p>
+    </section>
+
+    <!-- KPIS -->
+    <div class="grid-kpi">
+      <div class="card-kpi">
+        <div class="kpi-num" id="kpiMemtable">0 / 4</div>
+        <div class="kpi-label">سعة الذاكرة اللحظية (MemTable Entries)</div>
+      </div>
+      <div class="card-kpi">
+        <div class="kpi-num" id="kpiL0">0</div>
+        <div class="kpi-label">ملفات المستوى صفر (Level 0 SSTables)</div>
+      </div>
+      <div class="card-kpi">
+        <div class="kpi-num" id="kpiL1">0</div>
+        <div class="kpi-label">ملفات المستوى المدمج (Level 1 SSTables)</div>
+      </div>
+      <div class="card-kpi">
+        <div class="kpi-num" id="kpiBloomBits">0%</div>
+        <div class="kpi-label">كثافة بتات فلتر بلوم (Bloom Filter Density)</div>
+      </div>
+    </div>
+
+    <!-- MAIN GRID -->
+    <div class="main-grid">
+      <!-- WORKBENCH -->
+      <div>
+        <div class="panel">
+          <div class="panel-header">
+            <h3 style="font-weight: 800;">لوحة أوامر محرك التخزين (KV Operations)</h3>
+          </div>
+
+          <div class="input-group">
+            <label>المفتاح (Key):</label>
+            <input type="text" id="inputKey" class="input-control" value="user:101">
+          </div>
+
+          <div class="input-group">
+            <label>القيمة (Value):</label>
+            <input type="text" id="inputValue" class="input-control" value="Alice // Premium Plan">
+          </div>
+
+          <button class="btn" id="btnPut">💾 كتابة المفتاح (Put Operation)</button>
+          <button class="btn btn-secondary" id="btnGet">🔍 قراءة المفتاح (Get Operation)</button>
+          <button class="btn btn-danger" id="btnDel">🗑️ حذف المفتاح بتومبستون (Delete Tombstone)</button>
+          
+          <hr style="border: 0; border-top: 1px solid var(--border); margin: 1.25rem 0;">
+
+          <button class="btn btn-secondary" id="btnFlush" style="border-color: var(--accent);">⚡ تفريغ إجباري للذاكرة (Force Flush)</button>
+          <button class="btn btn-secondary" id="btnCompact" style="border-color: var(--success); color: var(--success);">🔄 دمج المستويات (Force Compaction)</button>
+
+          <div id="opStatus" style="margin-top: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--accent); background: #070B12; padding: 0.75rem; border-radius: 8px;">
+            جاهز لتنفيذ العمليات...
+          </div>
+        </div>
+      </div>
+
+      <!-- VISUALIZERS -->
+      <div>
+        <!-- BLOOM FILTER VISUALIZER -->
+        <div class="panel">
+          <div class="panel-header">
+            <h3 style="font-weight: 800;">مصفوفة فلتر بلوم الاحتمالية (128-Bit Array)</h3>
+            <span style="font-size: 0.8rem; color: var(--muted);">k = 3 Hashes // Zero False Negatives</span>
+          </div>
+          <div class="bloom-bit-grid" id="bloomBitGrid"></div>
+        </div>
+
+        <!-- MEMTABLE ENTRIES -->
+        <div class="panel">
+          <div class="panel-header">
+            <h3 style="font-weight: 800;">الذاكرة العشوائية المرتبة (MemTable Contents)</h3>
+            <span style="font-size: 0.8rem; color: var(--muted);" id="memtableCount">0 عناصر</span>
+          </div>
+          <div id="memtableDisplay" style="font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; background: #070B12; padding: 1rem; border-radius: 10px; max-height: 160px; overflow-y: auto;">
+            الذاكرة فارغة
+          </div>
+        </div>
+
+        <!-- SSTABLE DISK STORAGE -->
+        <div class="panel">
+          <div class="panel-header">
+            <h3 style="font-weight: 800;">الملفات غير القابلة للتعديل على القرص (On-Disk SSTables)</h3>
+          </div>
+          <h4 style="font-size: 0.9rem; color: var(--muted); margin-bottom: 0.75rem;">المستوى L0 (تفريغ مباشر من الذاكرة):</h4>
+          <div class="sstable-cards" id="l0Container" style="margin-bottom: 1.5rem;">
+            <div style="color: var(--muted); font-size: 0.85rem;">لا توجد ملفات في L0</div>
+          </div>
+
+          <h4 style="font-size: 0.9rem; color: var(--muted); margin-bottom: 0.75rem;">المستوى L1 (ملفات مدمجة مرتبة خالية من التومبستون):</h4>
+          <div class="sstable-cards" id="l1Container">
+            <div style="color: var(--muted); font-size: 0.85rem;">لا توجد ملفات في L1</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AUTHOR SEAL -->
+    <div class="author-seal-box">
+      <div class="author-seal-glyph">🏛️</div>
+      <div style="text-align: right;">
+        <h4 style="font-size: 1.15rem; color: #FFD700; font-weight: 800;">أ. طارق ابوعشي</h4>
+        <div style="font-size: 0.85rem; color: var(--muted);">معمارية محركات قواعد البيانات وهياكل التخزين المتقدمة</div>
+      </div>
+    </div>
+  </main>
+
+  <script src="src/storage/wal.js"></script>
+  <script src="src/storage/bloom-filter.js"></script>
+  <script src="src/storage/memtable.js"></script>
+  <script src="src/storage/sstable.js"></script>
+  <script src="src/storage/compaction.js"></script>
+  <script src="src/engine.js"></script>
+  <script>
+    const engine = new PulseKVEngine({ memtableCapacity: 4, l0Threshold: 3 });
+
+    // Initialize Bloom Filter Visualizer (128 bits)
+    const bloomGrid = document.getElementById('bloomBitGrid');
+    for (let i = 0; i < 128; i++) {
+      const bit = document.createElement('div');
+      bit.className = 'bit-cell';
+      bit.id = 'bit_' + i;
+      bloomGrid.appendChild(bit);
+    }
+
+    function renderUI() {
+      // KPIs
+      document.getElementById('kpiMemtable').textContent = `${engine.memtable.size()} / 4`;
+      document.getElementById('kpiL0').textContent = engine.l0Tables.length;
+      document.getElementById('kpiL1').textContent = engine.l1Tables.length;
+
+      // Memtable Display
+      const memEntries = engine.memtable.getSortedEntries();
+      document.getElementById('memtableCount').textContent = `${memEntries.length} عناصر`;
+      if (memEntries.length === 0) {
+        document.getElementById('memtableDisplay').textContent = 'الذاكرة فارغة';
+      } else {
+        document.getElementById('memtableDisplay').innerHTML = memEntries.map(e => 
+          `<div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span style="color:var(--accent);">${e.key}</span>
+            <span style="color:${e.isTombstone ? 'var(--danger)' : '#FFF'};">${e.isTombstone ? '[TOMBSTONE]' : e.value}</span>
+          </div>`
+        ).join('');
+      }
+
+      // Bloom Filter Bits
+      let activeBits = 0;
+      const allTables = [...engine.l0Tables, ...engine.l1Tables];
+      for (let i = 0; i < 128; i++) {
+        let isSet = false;
+        for (const t of allTables) {
+          const byteIdx = Math.floor(i / 8);
+          const bitOffset = i % 8;
+          if ((t.bloomFilter.bitArray[byteIdx] & (1 << bitOffset)) !== 0) {
+            isSet = true;
+            break;
+          }
+        }
+        const el = document.getElementById('bit_' + i);
+        if (el) {
+          if (isSet) { el.classList.add('active'); activeBits++; }
+          else { el.classList.remove('active'); }
+        }
+      }
+      document.getElementById('kpiBloomBits').textContent = Math.round((activeBits / 128) * 100) + '%';
+
+      // L0 SSTables
+      const l0El = document.getElementById('l0Container');
+      if (engine.l0Tables.length === 0) {
+        l0El.innerHTML = '<div style="color:var(--muted); font-size:0.85rem;">لا توجد ملفات في L0</div>';
+      } else {
+        l0El.innerHTML = engine.l0Tables.map(t => `
+          <div class="sst-card">
+            <div class="sst-header">
+              <span>${t.id}</span>
+              <span style="color:var(--warning);">L0</span>
+            </div>
+            <div style="color:var(--muted);">Keys: [${t.minKey} ... ${t.maxKey}]</div>
+            <div style="color:var(--muted);">Entries: ${t.entries.length}</div>
+          </div>
+        `).join('');
+      }
+
+      // L1 SSTables
+      const l1El = document.getElementById('l1Container');
+      if (engine.l1Tables.length === 0) {
+        l1El.innerHTML = '<div style="color:var(--muted); font-size:0.85rem;">لا توجد ملفات في L1</div>';
+      } else {
+        l1El.innerHTML = engine.l1Tables.map(t => `
+          <div class="sst-card" style="border-color:var(--success);">
+            <div class="sst-header">
+              <span style="color:var(--success);">${t.id}</span>
+              <span style="color:var(--success);">L1 COMPACTED</span>
+            </div>
+            <div style="color:var(--muted);">Keys: [${t.minKey} ... ${t.maxKey}]</div>
+            <div style="color:var(--muted);">Entries: ${t.entries.length}</div>
+          </div>
+        `).join('');
+      }
+    }
+
+    // Button Actions
+    document.getElementById('btnPut').addEventListener('click', () => {
+      const k = document.getElementById('inputKey').value.trim();
+      const v = document.getElementById('inputValue').value.trim();
+      if (!k) return;
+      engine.put(k, v);
+      document.getElementById('opStatus').innerHTML = `✓ تم كتابة المفتاح [${k}] في WAL و MemTable بنجاح.`;
+      renderUI();
+    });
+
+    document.getElementById('btnGet').addEventListener('click', () => {
+      const k = document.getElementById('inputKey').value.trim();
+      if (!k) return;
+      const res = engine.get(k);
+      if (res !== null) {
+        document.getElementById('opStatus').innerHTML = `✓ تم العثور على المفتاح: [${k}] => <span style="color:#FFF;">${res}</span>`;
+      } else {
+        document.getElementById('opStatus').innerHTML = `⚠️ المفتاح [${k}] غير موجود (تم الفحص عبر Bloom Filter والقرص).`;
+      }
+    });
+
+    document.getElementById('btnDel').addEventListener('click', () => {
+      const k = document.getElementById('inputKey').value.trim();
+      if (!k) return;
+      engine.delete(k);
+      document.getElementById('opStatus').innerHTML = `🗑️ تم وسم المفتاح [${k}] بتومبستون (Tombstone) للحذف التدريجي.`;
+      renderUI();
+    });
+
+    document.getElementById('btnFlush').addEventListener('click', () => {
+      engine.flushMemTable();
+      document.getElementById('opStatus').innerHTML = `⚡ تم تفريغ الذاكرة فورياً إلى جدول L0 SSTable على القرص.`;
+      renderUI();
+    });
+
+    document.getElementById('btnCompact').addEventListener('click', () => {
+      const res = engine.compact();
+      document.getElementById('opStatus').innerHTML = `🔄 اكتمل الدمج التدريجي: دمج ${res.compactedCount} مفاتيح وتطهير ${res.purgedTombstones} تومبستون.`;
+      renderUI();
+    });
+
+    // Seed Initial Data
+    engine.put('user:001', 'Omar Khalid');
+    engine.put('user:002', 'Sara Ahmad');
+    engine.put('user:003', 'Zaid Mansoor');
+    engine.put('user:004', 'Laila Fahad'); // triggers flush 1
+    engine.put('user:005', 'Nasser Ali');
+    renderUI();
+  </script>
+</body>
+</html>
